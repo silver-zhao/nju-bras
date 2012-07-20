@@ -18,6 +18,7 @@ NEED_INSTALL=1
 if which pacman &> /dev/null; then
     XL2TPD_PATH="/etc/rc.d"
     INSTALL_CMD="pacman -U"
+    UNINSTALL_CMD="pacman -R"
     if [ $(uname -m) = "i686" ]; then
         XL2TPD_PACKAGE=xl2tpd-1.3.0-1-i686.pkg.tar.xz
     else
@@ -26,6 +27,7 @@ if which pacman &> /dev/null; then
 elif which dpkg &> /dev/null; then
     XL2TPD_PATH="/etc/init.d"
     INSTALL_CMD="dpkg -i"
+    UNINSTALL_CMD="dpkg -P"
     if [ $(uname -m) = "i686" ]; then
         XL2TPD_PACKAGE=xl2tpd_1.2.7_dfsg-1_i386.deb
     else
@@ -34,6 +36,7 @@ elif which dpkg &> /dev/null; then
 elif which rpm &> /dev/null; then
     XL2TPD_PATH="/etc/rc.d/init.d"
     INSTALL_CMD="rpm -i"
+    UNINSTALL_CMD="rpm -e"
     if [ $(uname -m) = "i686" ]; then
         XL2TPD_PACKAGE=xl2tpd-1.3.0-1.fc16.i686.rpm
     else
@@ -41,6 +44,7 @@ elif which rpm &> /dev/null; then
     fi
 else
     NEEED_INSTALL=0
+    UNINSTALL_CMD="echo 'You have to manually remove'"
     echo "It seems that your system doesn't support package of deb or rpm."
     echo "You have to manually install xl2tpd."
 fi
@@ -61,7 +65,7 @@ if which xl2tpd &> /dev/null; then
         read -p "xl2tpd path: " XL2TPD_PATH
     done
 elif [ "$NEED_INSTALL" = "1" ]; then
-    wget http://bbs.nju.edu.cn/file/S/silverzhao/$XL2TPD_PACKAGE
+    wget --no-proxy http://bbs.nju.edu.cn/file/S/silverzhao/$XL2TPD_PACKAGE
     $INSTALL_CMD $XL2TPD_PACKAGE
     rm -f $XL2TPD_PACKAGE
 fi
@@ -103,11 +107,15 @@ case $1 in
 route)
 {
     if [ "$2" = "add" ]; then
-        GATEWAY=$(ip route | grep 'default' | awk '{print $3}')
+        GATEWAY=$(ip route | grep "default" | awk '{print $3}')
         ip route replace default dev ppp0
     elif [ "$2" = "del" ]; then
-        GATEWAY=$(ip route | grep '219.219.112.0' | awk '{print $3}')
-        ip route replace default via $GATEWAY
+        GATEWAY=$(ip route | grep "219.219.112.0" | awk '{print $3}')
+        if ! ip route | grep -q "default"; then
+            ip route add default via $GATEWAY
+        fi
+    else
+        exit 1
     fi
 
     ip route $2 58.192.32.0/20 via $GATEWAY
@@ -145,7 +153,7 @@ cat > /usr/local/sbin/brasup << EEOOFF
 #!/bin/bash
 
 bras-ctrl start
-while ! ifconfig | grep -q "ppp0"; do
+while ! ip link | grep -q "ppp0"; do
     sleep 1
 done
 bras-ctrl route add
@@ -162,11 +170,30 @@ bras-ctrl route del
 exit 0
 EEOOFF
 
+cat > /usr/local/sbin/bras-uninstall << EEOOFF
+#!/bin/bash
+
+echo "removing config file..."
+rm -f /usr/local/sbin/bras-ctrl
+rm -f /usr/local/sbin/brasup
+rm -f /usr/local/sbin/brasdown
+rm -f /etc/xl2tpd/xl2tpd.conf
+rm -f /etc/ppp/options.bras
+rm -f /etc/ppp/chap-secrets
+echo "removing xl2tpd..."
+$UNINSTALL_CMD xl2tpd
+echo "Done!"
+rm -f /usr/local/sbin/bras-uninstall
+
+exit 0
+EEOOFF
+
 chmod +x /usr/local/sbin/bras-ctrl
 chmod +x /usr/local/sbin/brasup
 chmod +x /usr/local/sbin/brasdown
+chmod +x /usr/local/sbin/bras-uninstall
 
-if ! grep -q '/usr/local/sbin' /etc/profile; then
+if ! grep -q "/usr/local/sbin" /etc/profile; then
     sed -i 's#^PATH="#&/usr/local/sbin:#' /etc/profile
 fi
 
