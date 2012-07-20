@@ -13,28 +13,27 @@ if [ $UID -ne 0 ]; then
     exit 1
 fi
 
-if grep "Arch" /etc/issue &> /dev/null; then
-    XL2TPD_PATH='\/etc\/rc.d'
+NEED_INSTALL=1
+
+if which pacman &> /dev/null; then
+    XL2TPD_PATH="/etc/rc.d"
     INSTALL_CMD="pacman -U"
-    NEED_INSTALL=1
     if [ $(uname -m) = "i686" ]; then
         XL2TPD_PACKAGE=xl2tpd-1.3.0-1-i686.pkg.tar.xz
     else
         XL2TPD_PACKAGE=xl2tpd-1.3.0-1-x86_64.pkg.tar.xz
     fi
-elif grep "Ubuntu" /etc/issue &> /dev/null; then
-    XL2TPD_PATH='\/etc\/init.d'
+elif which dpkg &> /dev/null; then
+    XL2TPD_PATH="/etc/init.d"
     INSTALL_CMD="dpkg -i"
-    NEED_INSTALL=1
     if [ $(uname -m) = "i686" ]; then
         XL2TPD_PACKAGE=xl2tpd_1.2.7_dfsg-1_i386.deb
     else
         XL2TPD_PACKAGE=xl2tpd_1.2.7_dfsg-1_amd64.deb
     fi
-elif grep "Fedora" /etc/issue &> /dev/null; then
-    XL2TPD_PATH='\/etc\/rc.d\/init.d'
-    INSTALL_CMD="yum localinstall"
-    NEED_INSTALL=1
+elif which rpm &> /dev/null; then
+    XL2TPD_PATH="/etc/rc.d/init.d"
+    INSTALL_CMD="rpm -i"
     if [ $(uname -m) = "i686" ]; then
         XL2TPD_PACKAGE=xl2tpd-1.3.0-1.fc16.i686.rpm
     else
@@ -42,52 +41,61 @@ elif grep "Fedora" /etc/issue &> /dev/null; then
     fi
 else
     NEEED_INSTALL=0
-    echo "Are you using Archlinux/Ubuntu/Fedora? \
-If not, maybe you have to manually install xl2tpd first."
+    echo "It seems that your system doesn't support package of deb or rpm."
+    echo "You have to manually install xl2tpd."
 fi
 
 while [ -z "$BRAS_ID" ]; do
-    read -p 'BRAS_ID: ' BRAS_ID
+    read -p "BRAS_ID: " BRAS_ID
 done
 
 while [ -z "$BRAS_PASSWORD" ]; do
-    read -s -p 'BRAS_PASSWORD: (Input is hidden.)' BRAS_PASSWORD
+    read -s -p "BRAS_PASSWORD: (Input is hidden.)" BRAS_PASSWORD
 done
-echo ""
+echo
 
-if ! which xl2tpd &> /dev/null && [ $NEED_INSTALL = "1" ]; then
-    wget --no-proxy http://bbs.nju.edu.cn/file/S/silverzhao/$XL2TPD_PACKAGE
+if which xl2tpd &> /dev/null; then
+    echo "It seems that the xl2tpd was manually installed."
+    echo "Please specify the path of xl2tpd, such as /etc/rc.d"
+    while [ -z "$XL2TPD_PATH" ]; do
+        read -p "xl2tpd path: " XL2TPD_PATH
+    done
+elif [ "$NEED_INSTALL" = "1" ]; then
+    wget http://bbs.nju.edu.cn/file/S/silverzhao/$XL2TPD_PACKAGE
     $INSTALL_CMD $XL2TPD_PACKAGE
     rm -f $XL2TPD_PACKAGE
 fi
 
 if ! which xl2tpd &> /dev/null; then
-    echo "Oops! It seems that xl2tpd hasn't been installed. \
-Please install it first."
+    echo "Oops! It seems that xl2tpd hasn't been installed."
+    echo "Please install it first."
     exit 2
 fi
 
-sed -e "s/BRAS_ID/$BRAS_ID/" > /etc/xl2tpd/xl2tpd.conf << "EEOOFF" 
+cat > /etc/xl2tpd/xl2tpd.conf << EEOOFF
 [lac bras]
 lns = 172.21.100.100
-name = BRAS_ID
+name = $BRAS_ID
 pppoptfile = /etc/ppp/options.bras
 EEOOFF
 
-cat > /etc/ppp/options.bras << "EEOOFF"
+if [ -e /etc/ppp/options ]; then
+    mv /etc/ppp/options /etc/ppp/options.bak
+fi
+
+cat > /etc/ppp/options.bras << EEOOFF
 noauth
 nodefaultroute
 EEOOFF
 
-sed -e "s/BRAS_ID/$BRAS_ID/" -e "s/BRAS_PASSWORD/$BRAS_PASSWORD/" \
-> /etc/ppp/chap-secrets << "EEOOFF" 
-# client	server	secret	IP addresses
-BRAS_ID	*	BRAS_PASSWORD	*
+cat > /etc/ppp/chap-secrets << EEOOFF
+# client    server    secret    IP addresses
+$BRAS_ID    *    $BRAS_PASSWORD    *
 EEOOFF
 
 mkdir -p /usr/local/sbin
 
-sed -e "s/XL2TPD_PATH/$XL2TPD_PATH/" \
+sed -e "s:XL2TPD_PATH:$XL2TPD_PATH:" \
 > /usr/local/sbin/bras-ctrl << "EEOOFF"
 #!/bin/bash
 
@@ -115,7 +123,7 @@ route)
     ip route $2 210.29.240.0/20 via $GATEWAY
     ip route $2 219.219.112.0/20 via $GATEWAY
 } &> /dev/null
-;;
+    ;;
 
 start)
     XL2TPD_PATH/xl2tpd start
@@ -132,23 +140,20 @@ stop)
     ;;
 esac
 EEOOFF
-chmod +x /usr/local/sbin/bras-ctrl
 
-cat > /usr/local/sbin/brasup << "EEOOFF"
-
+cat > /usr/local/sbin/brasup << EEOOFF
 #!/bin/bash
 
 bras-ctrl start
-while ! ifconfig | grep "ppp" > /dev/null 2>&1; do
+while ! ifconfig | grep -q "ppp0"; do
     sleep 1
 done
 bras-ctrl route add
 
 exit 0
 EEOOFF
-chmod +x /usr/local/sbin/brasup
 
-cat > /usr/local/sbin/brasdown << "EEOOFF"
+cat > /usr/local/sbin/brasdown << EEOOFF
 #!/bin/bash
 
 bras-ctrl stop
@@ -156,9 +161,15 @@ bras-ctrl route del
 
 exit 0
 EEOOFF
+
+chmod +x /usr/local/sbin/bras-ctrl
+chmod +x /usr/local/sbin/brasup
 chmod +x /usr/local/sbin/brasdown
 
-sed -i 's/^PATH="/&\/usr\/local\/sbin:/' /etc/profile
+if ! grep -q '/usr/local/sbin' /etc/profile; then
+    sed -i 's#^PATH="#&/usr/local/sbin:#' /etc/profile
+fi
+
 export PATH=$PATH:/usr/local/sbin
 
 echo "
