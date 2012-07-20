@@ -48,6 +48,13 @@ else
     echo "You have to manually install xl2tpd."
 fi
 
+if [ -z "$1" ]; then
+    BRAS_OUT_ID=test_bras_out_id
+    BRAS_OUT_PASSWORD=test_bras_out_pwd
+else
+    echo "For bras *IN* campus:"
+fi
+
 while [ -z "$BRAS_ID" ]; do
     read -p "BRAS_ID: " BRAS_ID
 done
@@ -57,10 +64,28 @@ while [ -z "$BRAS_PASSWORD" ]; do
 done
 echo
 
+if [ -n "$1" ]; then
+    echo
+    echo "For bras *OFF* campus:"
+fi
+
+while [ -z "$BRAS_OUT_ID" ]; do
+    read -p "BRAS_OUT_ID: " BRAS_OUT_ID
+done
+
+while [ -z "$BRAS_OUT_PASSWORD" ]; do
+    read -s -p "BRAS_OUT_PASSWORD: (Input is hidden.)" BRAS_OUT_PASSWORD
+done
+echo
+echo
+
 if which xl2tpd &> /dev/null; then
     UNINSTALL_CMD="echo 'You have to manually remove'"
     echo "It seems that the xl2tpd was manually installed."
-    echo "Please specify the path of xl2tpd, such as /etc/init.d"
+    echo "Please specify the directory containing xl2tpd daemon, such as:"
+	echo "/etc/init.d ==> for Ubuntu"
+    echo "/etc/rc.d/init.d ==> for Fedora"
+	echo "/etc/rc.d ==> for Arch"
     XL2TPD_PATH=
     while [ -z "$XL2TPD_PATH" ]; do
         read -p "xl2tpd path: " XL2TPD_PATH
@@ -77,18 +102,22 @@ if ! which xl2tpd &> /dev/null; then
     exit 2
 fi
 
+XL2TPD_CONFIG_FILE="/etc/xl2tpd/xl2tpd.conf"
 BRAS_CONFIG_FILE="/etc/ppp/peers/bras"
+BRAS_OUT_CONFIG_FILE="/etc/ppp/peers/bras_out"
 BRAS_SECRET_FILE="/etc/ppp/chap-secrets"
 
-cat > /etc/xl2tpd/xl2tpd.conf << EEOOFF
+cat > $XL2TPD_CONFIG_FILE << EEOOFF
 [lac bras]
 lns = 172.21.100.100
 pppoptfile = $BRAS_CONFIG_FILE
+
+[lac bras_out]
+lns = 218.94.142.114
+pppoptfile = $BRAS_OUT_CONFIG_FILE
 EEOOFF
 
-if [ -e /etc/ppp/options ]; then
-    mv /etc/ppp/options /etc/ppp/options.bak
-fi
+[ -e /etc/ppp/options ] && mv /etc/ppp/options /etc/ppp/options.bak
 
 cat > $BRAS_CONFIG_FILE << EEOOFF
 user $BRAS_ID
@@ -96,9 +125,21 @@ noauth
 nodefaultroute
 EEOOFF
 
+cat > $BRAS_OUT_CONFIG_FILE << EEOOFF
+user $BRAS_OUT_ID
+noauth
+nodefaultroute
+usepeerdns
+mtu 1452
+EEOOFF
+
 cat > $BRAS_SECRET_FILE << EEOOFF
 # client    server    secret    IP addresses
+# for bras in-campus
 $BRAS_ID    *    $BRAS_PASSWORD    *
+
+# for bras off-campus
+$BRAS_OUT_ID    *    $BRAS_OUT_PASSWORD    *
 EEOOFF
 chmod 600 $BRAS_SECRET_FILE
 
@@ -109,19 +150,18 @@ mkdir -p $BRAS_BIN_DIR
 sed -e "s:XL2TPD_PATH:$XL2TPD_PATH:" > $BRAS_BIN_DIR/bras-ctrl << "EEOOFF"
 #!/bin/bash
 
-#gateway_file="/tmp/.route.txt"
-
 case $1 in
 route)
 {
     if [ "$2" = "add" ]; then
-        GATEWAY=$(ip route | grep "default" | awk '{print $3}')
-#        echo $GATEWAY > $gateway_file
-        ip route replace default dev ppp0
+        if [ -z "$3" ]; then
+            GATEWAY=$(ip route | grep "default" | awk '{print $3}')
+            ip route replace default dev ppp0
+        else
+            GATEWAY=$(ip route | grep "180.209" | awk '{print $1}')
+        fi
     elif [ "$2" = "del" ]; then
         GATEWAY=$(ip route | grep "219.219.112.0" | awk '{print $3}')
-#        read GATEWAY < $gateway_file
-#        rm -f $gateway_file
         if ! ip route | grep -q "default"; then
             ip route add default via $GATEWAY
         fi
@@ -146,11 +186,19 @@ route)
 
 start)
     XL2TPD_PATH/xl2tpd start
-    sh -c 'echo "c bras" > /var/run/xl2tpd/l2tp-control'
+    if [ -z "$2" ]; then
+        sh -c 'echo "c bras" > /var/run/xl2tpd/l2tp-control'
+    else
+        sh -c 'echo "c bras_out" > /var/run/xl2tpd/l2tp-control'
+    fi
     ;;
-
+    
 stop)
-    sh -c 'echo "d bras" > /var/run/xl2tpd/l2tp-control'
+    if [ -z "$2" ]; then
+        sh -c 'echo "d bras" > /var/run/xl2tpd/l2tp-control'
+    else
+        sh -c 'echo "d bras_out" > /var/run/xl2tpd/l2tp-control'
+    fi
     XL2TPD_PATH/xl2tpd stop
     ;;
 
@@ -161,28 +209,38 @@ esac
 EEOOFF
 
 if which ifconfig &> /dev/null; then
-    DETECT_PPP='ifconfig | grep -q "ppp0"'
+    DETECT_PPP="ifconfig | grep -q 'ppp0'"
 else
-    DETECT_PPP='ip link show ppp0 &> /dev/null'
+    DETECT_PPP="ip link show ppp0 &> /dev/null"
 fi
 
-cat > $BRAS_BIN_DIR/brasup << EEOOFF
+sed -e "s:DETECT_PPP:$DETECT_PPP:" > $BRAS_BIN_DIR/brasup << "EEOOFF"
 #!/bin/bash
 
-bras-ctrl start
-while ! $DETECT_PPP; do
+bras-ctrl start $1
+
+if [ -z "$1" ]; then
+    BRAS_DONE="DETECT_PPP"
+else
+    BRAS_DONE="ip route | grep -q '180.209'"
+fi
+
+while ! eval "$BRAS_DONE"; do
     sleep 1
 done
-bras-ctrl route add
+
+bras-ctrl route add $1
 
 exit 0
 EEOOFF
 
-cat > $BRAS_BIN_DIR/brasdown << EEOOFF
+cat > $BRAS_BIN_DIR/brasdown << "EEOOFF"
 #!/bin/bash
 
-bras-ctrl stop
-bras-ctrl route del
+bras-ctrl stop $1
+if [ -z "$1" ]; then
+    bras-ctrl route del
+fi
 
 exit 0
 EEOOFF
@@ -199,8 +257,9 @@ echo "removing config file..."
 rm -f $BRAS_BIN_DIR/bras-ctrl \\
       $BRAS_BIN_DIR/brasup \\
       $BRAS_BIN_DIR/brasdown \\
-      /etc/xl2tpd/xl2tpd.conf \\
+      $XL2TPD_CONFIG_FILE \\
       $BRAS_CONFIG_FILE \\
+      $BRAS_OUT_CONFIG_FILE \\
       $BRAS_SECRET_FILE \\
       /etc/ppp/options.bak
 echo "removing xl2tpd..."
@@ -217,8 +276,7 @@ chmod +x $BRAS_BIN_DIR/brasdown
 chmod +x $BRAS_BIN_DIR/bras-uninstall
 
 if ! grep -q "$BRAS_BIN_DIR" /etc/profile; then
-    sed_cmd="s#^PATH=\"#&$BRAS_BIN_DIR:#"
-    sed -i "$sed_cmd" /etc/profile
+    sed -i "s#^PATH=\"#&$BRAS_BIN_DIR:#" /etc/profile
 fi
 
 export PATH=$PATH:$BRAS_BIN_DIR
