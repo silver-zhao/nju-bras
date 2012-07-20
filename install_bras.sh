@@ -13,7 +13,7 @@ if [ $UID -ne 0 ]; then
     exit 1
 fi
 
-NEED_INSTALL=1
+SUPPORTED=1
 
 if which pacman &> /dev/null; then
     XL2TPD_PATH="/etc/rc.d"
@@ -43,8 +43,7 @@ elif which rpm &> /dev/null; then
         XL2TPD_PACKAGE=xl2tpd-1.3.0-1.fc16.x86_64.rpm
     fi
 else
-    NEEED_INSTALL=0
-    UNINSTALL_CMD="echo 'You have to manually remove'"
+    SUPPORTED=0
     echo "It seems that your system doesn't support package of deb or rpm."
     echo "You have to manually install xl2tpd."
 fi
@@ -59,13 +58,14 @@ done
 echo
 
 if which xl2tpd &> /dev/null; then
+    UNINSTALL_CMD="echo 'You have to manually remove'"
     echo "It seems that the xl2tpd was manually installed."
     echo "Please specify the path of xl2tpd, such as /etc/rc.d"
     XL2TPD_PATH=
     while [ -z "$XL2TPD_PATH" ]; do
         read -p "xl2tpd path: " XL2TPD_PATH
     done
-elif [ "$NEED_INSTALL" = "1" ]; then
+elif [ "$SUPPORTED" = "1" ]; then
     wget --no-proxy http://bbs.nju.edu.cn/file/S/silverzhao/$XL2TPD_PACKAGE
     $INSTALL_CMD $XL2TPD_PACKAGE
     rm -f $XL2TPD_PACKAGE
@@ -80,15 +80,15 @@ fi
 cat > /etc/xl2tpd/xl2tpd.conf << EEOOFF
 [lac bras]
 lns = 172.21.100.100
-name = $BRAS_ID
-pppoptfile = /etc/ppp/options.bras
+pppoptfile = /etc/ppp/peers/bras
 EEOOFF
 
 if [ -e /etc/ppp/options ]; then
     mv /etc/ppp/options /etc/ppp/options.bak
 fi
 
-cat > /etc/ppp/options.bras << EEOOFF
+cat > /etc/ppp/peers/bras << EEOOFF
+user $BRAS_ID
 noauth
 nodefaultroute
 EEOOFF
@@ -97,6 +97,7 @@ cat > /etc/ppp/chap-secrets << EEOOFF
 # client    server    secret    IP addresses
 $BRAS_ID    *    $BRAS_PASSWORD    *
 EEOOFF
+chmod 600 /etc/ppp/chap-secrets
 
 mkdir -p /usr/local/sbin
 
@@ -186,12 +187,12 @@ echo "
 ##################################
 "
 echo "removing config file..."
-rm -f /usr/local/sbin/bras-ctrl \
-      /usr/local/sbin/brasup \
-      /usr/local/sbin/brasdown \
-      /etc/xl2tpd/xl2tpd.conf \
-      /etc/ppp/options.bras \
-      /etc/ppp/options.bak \
+rm -f /usr/local/sbin/bras-ctrl \\
+      /usr/local/sbin/brasup \\
+      /usr/local/sbin/brasdown \\
+      /etc/xl2tpd/xl2tpd.conf \\
+      /etc/ppp/peers/bras \\
+      /etc/ppp/options.bak \\
       /etc/ppp/chap-secrets
 echo "removing xl2tpd..."
 $UNINSTALL_CMD xl2tpd
