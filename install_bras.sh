@@ -149,11 +149,17 @@ stop)
 esac
 EEOOFF
 
+if which ifconfig &> /dev/null; then
+    DETECT_PPP='ifconfig | grep -q "ppp0"'
+else
+    DETECT_PPP='ip link show ppp0 &> /dev/null'
+fi
+
 cat > /usr/local/sbin/brasup << EEOOFF
 #!/bin/bash
 
 bras-ctrl start
-while ! ip link | grep -q "ppp0"; do
+while ! $DETECT_PPP; do
     sleep 1
 done
 bras-ctrl route add
@@ -174,12 +180,13 @@ cat > /usr/local/sbin/bras-uninstall << EEOOFF
 #!/bin/bash
 
 echo "removing config file..."
-rm -f /usr/local/sbin/bras-ctrl
-rm -f /usr/local/sbin/brasup
-rm -f /usr/local/sbin/brasdown
-rm -f /etc/xl2tpd/xl2tpd.conf
-rm -f /etc/ppp/options.bras
-rm -f /etc/ppp/chap-secrets
+rm -f /usr/local/sbin/bras-ctrl \
+      /usr/local/sbin/brasup \
+      /usr/local/sbin/brasdown \
+      /etc/xl2tpd/xl2tpd.conf \
+      /etc/ppp/options.bras \
+      /etc/ppp/options.bak \
+      /etc/ppp/chap-secrets
 echo "removing xl2tpd..."
 $UNINSTALL_CMD xl2tpd
 echo "Done!"
