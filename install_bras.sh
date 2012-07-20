@@ -61,6 +61,7 @@ echo
 if which xl2tpd &> /dev/null; then
     echo "It seems that the xl2tpd was manually installed."
     echo "Please specify the path of xl2tpd, such as /etc/rc.d"
+    XL2TPD_PATH=
     while [ -z "$XL2TPD_PATH" ]; do
         read -p "xl2tpd path: " XL2TPD_PATH
     done
@@ -179,6 +180,11 @@ EEOOFF
 cat > /usr/local/sbin/bras-uninstall << EEOOFF
 #!/bin/bash
 
+echo "
+##################################
+#      Uninstalling Bras...      #
+##################################
+"
 echo "removing config file..."
 rm -f /usr/local/sbin/bras-ctrl \
       /usr/local/sbin/brasup \
