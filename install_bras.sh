@@ -20,27 +20,27 @@ if which pacman &> /dev/null; then
     INSTALL_CMD="pacman -U"
     UNINSTALL_CMD="pacman -R"
     if [ $(uname -m) = "i686" ]; then
-        XL2TPD_PACKAGE=xl2tpd-1.3.0-1-i686.pkg.tar.xz
+        XL2TPD_PACKAGE="xl2tpd-1.3.0-1-i686.pkg.tar.xz"
     else
-        XL2TPD_PACKAGE=xl2tpd-1.3.0-1-x86_64.pkg.tar.xz
+        XL2TPD_PACKAGE="xl2tpd-1.3.0-1-x86_64.pkg.tar.xz"
     fi
 elif which dpkg &> /dev/null; then
     XL2TPD_PATH="/etc/init.d"
     INSTALL_CMD="dpkg -i"
     UNINSTALL_CMD="dpkg -P"
     if [ $(uname -m) = "i686" ]; then
-        XL2TPD_PACKAGE=xl2tpd_1.2.7_dfsg-1_i386.deb
+        XL2TPD_PACKAGE="xl2tpd_1.2.7_dfsg-1_i386.deb"
     else
-        XL2TPD_PACKAGE=xl2tpd_1.2.7_dfsg-1_amd64.deb
+        XL2TPD_PACKAGE="xl2tpd_1.2.7_dfsg-1_amd64.deb"
     fi
 elif which rpm &> /dev/null; then
     XL2TPD_PATH="/etc/rc.d/init.d"
     INSTALL_CMD="rpm -i"
     UNINSTALL_CMD="rpm -e"
     if [ $(uname -m) = "i686" ]; then
-        XL2TPD_PACKAGE=xl2tpd-1.3.0-1.fc16.i686.rpm
+        XL2TPD_PACKAGE="xl2tpd-1.3.0-1.fc16.i686.rpm"
     else
-        XL2TPD_PACKAGE=xl2tpd-1.3.0-1.fc16.x86_64.rpm
+        XL2TPD_PACKAGE="xl2tpd-1.3.0-1.fc16.x86_64.rpm"
     fi
 else
     SUPPORTED=0
@@ -60,7 +60,7 @@ echo
 if which xl2tpd &> /dev/null; then
     UNINSTALL_CMD="echo 'You have to manually remove'"
     echo "It seems that the xl2tpd was manually installed."
-    echo "Please specify the path of xl2tpd, such as /etc/rc.d"
+    echo "Please specify the path of xl2tpd, such as /etc/init.d"
     XL2TPD_PATH=
     while [ -z "$XL2TPD_PATH" ]; do
         read -p "xl2tpd path: " XL2TPD_PATH
@@ -77,42 +77,51 @@ if ! which xl2tpd &> /dev/null; then
     exit 2
 fi
 
+BRAS_CONFIG_FILE="/etc/ppp/peers/bras"
+BRAS_SECRET_FILE="/etc/ppp/chap-secrets"
+
 cat > /etc/xl2tpd/xl2tpd.conf << EEOOFF
 [lac bras]
 lns = 172.21.100.100
-pppoptfile = /etc/ppp/peers/bras
+pppoptfile = $BRAS_CONFIG_FILE
 EEOOFF
 
 if [ -e /etc/ppp/options ]; then
     mv /etc/ppp/options /etc/ppp/options.bak
 fi
 
-cat > /etc/ppp/peers/bras << EEOOFF
+cat > $BRAS_CONFIG_FILE << EEOOFF
 user $BRAS_ID
 noauth
 nodefaultroute
 EEOOFF
 
-cat > /etc/ppp/chap-secrets << EEOOFF
+cat > $BRAS_SECRET_FILE << EEOOFF
 # client    server    secret    IP addresses
 $BRAS_ID    *    $BRAS_PASSWORD    *
 EEOOFF
-chmod 600 /etc/ppp/chap-secrets
+chmod 600 $BRAS_SECRET_FILE
 
-mkdir -p /usr/local/sbin
+BRAS_BIN_DIR="/usr/local/sbin"
 
-sed -e "s:XL2TPD_PATH:$XL2TPD_PATH:" \
-> /usr/local/sbin/bras-ctrl << "EEOOFF"
+mkdir -p $BRAS_BIN_DIR
+
+sed -e "s:XL2TPD_PATH:$XL2TPD_PATH:" > $BRAS_BIN_DIR/bras-ctrl << "EEOOFF"
 #!/bin/bash
+
+#gateway_file="/tmp/.route.txt"
 
 case $1 in
 route)
 {
     if [ "$2" = "add" ]; then
         GATEWAY=$(ip route | grep "default" | awk '{print $3}')
+#        echo $GATEWAY > $gateway_file
         ip route replace default dev ppp0
     elif [ "$2" = "del" ]; then
         GATEWAY=$(ip route | grep "219.219.112.0" | awk '{print $3}')
+#        read GATEWAY < $gateway_file
+#        rm -f $gateway_file
         if ! ip route | grep -q "default"; then
             ip route add default via $GATEWAY
         fi
@@ -157,7 +166,7 @@ else
     DETECT_PPP='ip link show ppp0 &> /dev/null'
 fi
 
-cat > /usr/local/sbin/brasup << EEOOFF
+cat > $BRAS_BIN_DIR/brasup << EEOOFF
 #!/bin/bash
 
 bras-ctrl start
@@ -169,7 +178,7 @@ bras-ctrl route add
 exit 0
 EEOOFF
 
-cat > /usr/local/sbin/brasdown << EEOOFF
+cat > $BRAS_BIN_DIR/brasdown << EEOOFF
 #!/bin/bash
 
 bras-ctrl stop
@@ -178,7 +187,7 @@ bras-ctrl route del
 exit 0
 EEOOFF
 
-cat > /usr/local/sbin/bras-uninstall << EEOOFF
+cat > $BRAS_BIN_DIR/bras-uninstall << EEOOFF
 #!/bin/bash
 
 echo "
@@ -187,31 +196,32 @@ echo "
 ##################################
 "
 echo "removing config file..."
-rm -f /usr/local/sbin/bras-ctrl \\
-      /usr/local/sbin/brasup \\
-      /usr/local/sbin/brasdown \\
+rm -f $BRAS_BIN_DIR/bras-ctrl \\
+      $BRAS_BIN_DIR/brasup \\
+      $BRAS_BIN_DIR/brasdown \\
       /etc/xl2tpd/xl2tpd.conf \\
-      /etc/ppp/peers/bras \\
-      /etc/ppp/options.bak \\
-      /etc/ppp/chap-secrets
+      $BRAS_CONFIG_FILE \\
+      $BRAS_SECRET_FILE \\
+      /etc/ppp/options.bak
 echo "removing xl2tpd..."
 $UNINSTALL_CMD xl2tpd
 echo "Done!"
-rm -f /usr/local/sbin/bras-uninstall
+rm -f $BRAS_BIN_DIR/bras-uninstall
 
 exit 0
 EEOOFF
 
-chmod +x /usr/local/sbin/bras-ctrl
-chmod +x /usr/local/sbin/brasup
-chmod +x /usr/local/sbin/brasdown
-chmod +x /usr/local/sbin/bras-uninstall
+chmod +x $BRAS_BIN_DIR/bras-ctrl
+chmod +x $BRAS_BIN_DIR/brasup
+chmod +x $BRAS_BIN_DIR/brasdown
+chmod +x $BRAS_BIN_DIR/bras-uninstall
 
-if ! grep -q "/usr/local/sbin" /etc/profile; then
-    sed -i 's#^PATH="#&/usr/local/sbin:#' /etc/profile
+if ! grep -q "$BRAS_BIN_DIR" /etc/profile; then
+    sed_cmd="s#^PATH=\"#&$BRAS_BIN_DIR:#"
+    sed -i "$sed_cmd" /etc/profile
 fi
 
-export PATH=$PATH:/usr/local/sbin
+export PATH=$PATH:$BRAS_BIN_DIR
 
 echo "
 ##################################
